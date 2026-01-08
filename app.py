@@ -1,65 +1,97 @@
 # app.py
 import os
 import streamlit as st
+from PIL import Image
+import io
 from openai import OpenAI
 
-# --- Read API key from environment variable ---
+# -----------------------------
+# Read API key from environment
+# -----------------------------
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     st.error("Missing OPENAI_API_KEY. Set it before running the app.")
 client = OpenAI(api_key=api_key)
 
-# --- Vibe prompts (embedded, no separate file) ---
+# -----------------------------
+# Vibes dictionary
+# -----------------------------
 vibe_prompts = {
-    "Funny 😄": "Use humor, playful words, short sentences, and emojis.",
-    "Aesthetic ✨": "Use elegant words, focus on visuals, include soft emojis if appropriate.",
-    "Professional 💼": "Use formal tone, clear language, no emojis, concise sentences.",
-    "Emotional ❤️": "Use heartfelt, expressive language, include emotional words and emojis.",
-    "Confident 🔥": "Use assertive, bold language, exclamation marks, and confident emojis.",
-    "Casual 🧢": "Use informal, relaxed language, conversational style, light emojis.",
-    "Minimal 🧘": "Use very short sentences or phrases, minimal words, few or no emojis."
+    "Funny 😄": "Make it funny, playful, use casual language and emojis.",
+    "Aesthetic ✨": "Stylish, aesthetic, visually appealing captions.",
+    "Professional 💼": "Professional tone, polished, concise.",
+    "Emotional ❤️": "Emotional, heartfelt, expressive.",
+    "Confident 🔥": "Confident, bold, energetic.",
+    "Casual 🧢": "Relaxed, friendly, everyday tone.",
+    "Minimal 🧘": "Short, minimal, simple wording."
 }
 
-# --- Build prompt using image description + vibe ---
-def build_prompt(image_description, vibe):
-    vibe_text = vibe_prompts.get(vibe, "")
+# -----------------------------
+# Image-to-text summarization
+# -----------------------------
+def summarize_image(image_file):
+    """Generate a short text description of the uploaded image."""
+    # Convert image to bytes
+    img_bytes = image_file.read()
+    # Optional: could save to temp file if needed
     prompt = (
-        f"Generate 5 captions for the following image description, matching the vibe '{vibe}':\n\n"
-        f"{image_description}\n\n"
-        f"Use the following style:\n{vibe_text}"
+        "You are an AI that summarizes the content of images in 1-2 sentences. "
+        "Describe only what is visible in the image, do not guess intent or emotion."
     )
-    return prompt
+    # Use GPT with image bytes encoded as string (placeholder for simple demo)
+    # For real image understanding, could integrate BLIP or other model
+    description = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Image bytes (length {len(img_bytes)}): {img_bytes[:50]}..."}
+        ]
+    )
+    return description.choices[0].message.content
 
-# --- Generate captions ---
-def generate_captions(image_file, selected_vibe):
-    # Placeholder description for simple demo
-    image_description = "A person standing outdoors during golden hour"
-    
-    prompt = build_prompt(image_description, selected_vibe)
+# -----------------------------
+# Caption generation
+# -----------------------------
+def generate_captions(image_summary, vibe, n=5):
+    prompt = (
+        f"Generate {n} social media captions for the following image description:\n"
+        f"{image_summary}\n"
+        f"Style instructions based on vibe: {vibe_prompts[vibe]}\n"
+        f"Provide captions as a numbered list."
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "You are a social media caption generator."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    captions_text = response.choices[0].message.content
+    # Split numbered list into separate captions
+    lines = [line.strip() for line in captions_text.split("\n") if line.strip()]
+    return lines
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        captions_text = response.choices[0].message.content
-        captions = [line.strip() for line in captions_text.split("\n") if line.strip()]
-        return captions[:5]
-    except Exception as e:
-        return [f"Error generating captions: {str(e)}"]
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+st.title("Image-Aware Caption Generator with Vibe Control")
 
-# --- Streamlit UI ---
-st.title("Image-Aware Caption Generator")
-
-uploaded_image = st.file_uploader("Upload your photo", type=["jpg","png"])
+uploaded_image = st.file_uploader("Upload your photo", type=["jpg", "png"])
 selected_vibe = st.selectbox("Choose a vibe", list(vibe_prompts.keys()))
 
 if uploaded_image:
-    captions = generate_captions(uploaded_image, selected_vibe)
-    for i, caption in enumerate(captions):
-        st.write(f"{i+1}. {caption}")
-
-    if st.button("Regenerate"):
-        captions = generate_captions(uploaded_image, selected_vibe)
-        for i, caption in enumerate(captions):
-            st.write(f"{i+1}. {caption}")
+    with st.spinner("Analyzing image and generating captions..."):
+        try:
+            image_summary = summarize_image(uploaded_image)
+            captions = generate_captions(image_summary, selected_vibe)
+            
+            st.subheader("Generated Captions:")
+            for i, caption in enumerate(captions):
+                st.write(f"{i+1}. {caption}")
+            
+            if st.button("Regenerate"):
+                captions = generate_captions(image_summary, selected_vibe)
+                for i, caption in enumerate(captions):
+                    st.write(f"{i+1}. {caption}")
+        except Exception as e:
+            st.error(f"Error generating captions: {e}")
